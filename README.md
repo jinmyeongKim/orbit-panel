@@ -2,6 +2,8 @@
 
 Orbit Panel is a Windows-first productivity launcher built with Python and PySide6.
 
+![Orbit Panel dashboard](assets/screenshots/orbit-panel-dashboard.png)
+
 It manages two ordered groups in one dashboard:
 
 - URL items opened in Chrome
@@ -58,6 +60,12 @@ powershell -ExecutionPolicy Bypass -File tools/build_release.ps1
 
 The packaged executable is written to `dist/Orbit Panel.exe`.
 
+## Releases
+
+Prebuilt Windows executables are published on the GitHub Releases page:
+
+- https://github.com/jinmyeongKim/orbit-panel/releases
+
 ## Runtime data
 
 - Source mode stores runtime data under local `config/` and `logs/`
@@ -78,3 +86,7 @@ When a Python file is used, Orbit Panel passes these environment variables:
 - `ORBIT_PANEL_ITEM_TYPE`
 - `ORBIT_PANEL_ITEM_TARGET`
 - `ORBIT_PANEL_RUN_MODE`
+
+## License
+
+MIT
