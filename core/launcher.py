@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import logging
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+from typing import Sequence
+
+from core.action_dispatcher import ActionDispatcher
+from core.models import LauncherItem, LauncherType, RunMode, ScriptType
+
+
+@dataclass(slots=True)
+class ExecutionResult:
+    success: bool
+    message: str
+
+
+@dataclass(slots=True)
+class ItemExecutionReport:
+    item: LauncherItem
+    target_result: ExecutionResult
+    action_result: ExecutionResult
+
+    @property
+    def success(self) -> bool:
+        return self.target_result.success and self.action_result.success
+
+
+class LauncherService:
+    """Execute launcher targets and then run the mapped Python action."""
+
+    def __init__(self, logger: logging.Logger, dispatcher: ActionDispatcher) -> None:
+        self.logger = logger
+        self.dispatcher = dispatcher
+        self._chrome_path = self._find_chrome()
+
+        if self._chrome_path:
+            self.logger.info("Detected Chrome at %s", self._chrome_path)
+        else:
+            self.logger.info("Chrome not found. URL launches will fail until chrome.exe is available.")
+
+    def launch_target(self, item: LauncherItem) -> ExecutionResult:
+        if item.type is LauncherType.URL:
+            return self._launch_url(item)
+        if item.type is LauncherType.EXE:
+            return self._launch_exe(item)
+
+        message = f"Unsupported launcher type: {item.type!r}"
+        self.logger.error(message)
+        return ExecutionResult(False, message)
+
+    def run_action(self, item: LauncherItem) -> ExecutionResult:
+        script_name = item.script_name
+        if not script_name:
+            return ExecutionResult(True, "No script configured.")
+
+        if item.script_type is ScriptType.NONE:
+            return ExecutionResult(True, "No script configured.")
+        if item.script_type is ScriptType.BUILT_IN_ACTION:
+            success = self.dispatcher.dispatch(script_name, item)
+            message = f"Action '{script_name}' {'completed' if success else 'failed'}"
+            return ExecutionResult(success, message)
+        if item.script_type is ScriptType.PYTHON_FILE:
+            return self._run_python_file(item, script_name)
+
+        return ExecutionResult(False, f"Unsupported script type: {item.script_type.value}")
+
+    def execute_item(self, item: LauncherItem) -> ItemExecutionReport:
+        if item.run_mode is RunMode.TARGET_ONLY:
+            target_result = self.launch_target(item)
+            action_result = ExecutionResult(True, "Script skipped by run mode.")
+        elif item.run_mode is RunMode.SCRIPT_ONLY:
+            target_result = ExecutionResult(True, "Target skipped by run mode.")
+            action_result = self.run_action(item)
+        else:
+            target_result = self.launch_target(item)
+            action_result = self.run_action(item)
+        return ItemExecutionReport(
+            item=item,
+            target_result=target_result,
+            action_result=action_result,
+        )
+
+    def execute_script_only(self, item: LauncherItem) -> ItemExecutionReport:
+        return ItemExecutionReport(
+            item=item,
+            target_result=ExecutionResult(True, "Target skipped for explicit script run."),
+            action_result=self.run_action(item),
+        )
+
+    def execute_group(self, items: Sequence[LauncherItem]) -> list[ItemExecutionReport]:
+        reports: list[ItemExecutionReport] = []
+        for item in items:
+            reports.append(self.execute_item(item))
+        return reports
+
+    def _launch_url(self, item: LauncherItem) -> ExecutionResult:
+        target = item.target.strip()
+        if not target:
+            message = f"URL target is empty for '{item.title}'"
+            self.logger.warning(message)
+            return ExecutionResult(False, message)
+
+        self.logger.info("Launching URL target for '%s': %s", item.title, target)
+
+        chrome_path = self._chrome_path or self._find_chrome()
+        if not chrome_path:
+            message = "Chrome is required for URL items, but chrome.exe was not found."
+            self.logger.error(message)
+            return ExecutionResult(False, message)
+
+        try:
+            subprocess.Popen([str(chrome_path), "--new-tab", target], cwd=str(chrome_path.parent))
+        except OSError:
+            self.logger.exception("Chrome launch failed for '%s'", item.title)
+            return ExecutionResult(False, f"Failed to open URL in Chrome: {target}")
+
+        message = f"Opened URL in Chrome: {target}"
+        self.logger.info("URL launch succeeded for '%s' via Chrome", item.title)
+        return ExecutionResult(True, message)
+
+    def _launch_exe(self, item: LauncherItem) -> ExecutionResult:
+        raw_target = item.target.strip()
+        if not raw_target:
+            message = f"Executable target is empty for '{item.title}'"
+            self.logger.warning(message)
+            return ExecutionResult(False, message)
+
+        expanded_path = Path(os.path.expandvars(raw_target)).expanduser()
+        try:
+            exe_path = expanded_path.resolve(strict=False)
+        except OSError:
+            exe_path = expanded_path
+
+        suffix = exe_path.suffix.lower()
+        if suffix not in {".exe", ".lnk"}:
+            message = f"Target is not an EXE file or Windows shortcut: {exe_path}"
+            self.logger.warning(message)
+            return ExecutionResult(False, message)
+
+        if not exe_path.exists():
+            message = f"Executable target not found: {exe_path}"
+            self.logger.warning(message)
+            return ExecutionResult(False, message)
+
+        if suffix == ".lnk":
+            self.logger.info("Launching shortcut target for '%s': %s", item.title, exe_path)
+            try:
+                os.startfile(str(exe_path))
+            except OSError:
+                self.logger.exception("Shortcut launch failed for '%s'", item.title)
+                return ExecutionResult(False, f"Failed to launch shortcut: {exe_path}")
+
+            self.logger.info("Shortcut launch succeeded for '%s'", item.title)
+            return ExecutionResult(True, f"Launched shortcut: {exe_path}")
+
+        self.logger.info("Launching EXE target for '%s': %s", item.title, exe_path)
+        try:
+            subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
+        except OSError:
+            self.logger.exception("Executable launch failed for '%s'", item.title)
+            return ExecutionResult(False, f"Failed to launch EXE: {exe_path}")
+
+        self.logger.info("EXE launch succeeded for '%s'", item.title)
+        return ExecutionResult(True, f"Launched EXE: {exe_path}")
+
+    def _find_chrome(self) -> Path | None:
+        candidates: list[Path] = []
+
+        path_hit = shutil.which("chrome") or shutil.which("chrome.exe")
+        if path_hit:
+            candidates.append(Path(path_hit))
+
+        for env_name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            root = os.environ.get(env_name)
+            if not root:
+                continue
+            candidates.append(Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe")
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = str(candidate).lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            if candidate.exists():
+                return candidate
+
+        return None
+
+    def _run_python_file(self, item: LauncherItem, script_name: str) -> ExecutionResult:
+        script_path = Path(os.path.expandvars(script_name)).expanduser()
+        try:
+            script_path = script_path.resolve(strict=False)
+        except OSError:
+            pass
+
+        if script_path.suffix.lower() != ".py":
+            message = f"Python script must be a .py file: {script_path}"
+            self.logger.warning(message)
+            return ExecutionResult(False, message)
+
+        if not script_path.exists():
+            message = f"Python script not found: {script_path}"
+            self.logger.warning(message)
+            return ExecutionResult(False, message)
+
+        python_command = self._resolve_python_command()
+        if not python_command:
+            message = "No Python interpreter was found for running external scripts."
+            self.logger.error(message)
+            return ExecutionResult(False, message)
+
+        env = os.environ.copy()
+        env["ORBIT_PANEL_ITEM_ID"] = item.id
+        env["ORBIT_PANEL_ITEM_TITLE"] = item.title
+        env["ORBIT_PANEL_ITEM_TYPE"] = item.type.value
+        env["ORBIT_PANEL_ITEM_TARGET"] = item.target
+        env["ORBIT_PANEL_RUN_MODE"] = item.run_mode.value
+
+        command = [*python_command, str(script_path)]
+        self.logger.info("Running Python script for '%s': %s", item.title, command)
+        try:
+            subprocess.Popen(
+                command,
+                cwd=str(script_path.parent),
+                env=env,
+            )
+        except OSError:
+            self.logger.exception("Python script launch failed for '%s'", item.title)
+            return ExecutionResult(False, f"Failed to run Python script: {script_path}")
+
+        return ExecutionResult(True, f"Started Python script: {script_path}")
+
+    def _resolve_python_command(self) -> list[str] | None:
+        current_executable = Path(sys.executable)
+        current_name = current_executable.name.lower()
+        if current_name in {"python.exe", "pythonw.exe"} and current_executable.exists():
+            return [str(current_executable)]
+
+        for candidate in ("pyw", "py", "pythonw", "python", "python3"):
+            hit = shutil.which(candidate)
+            if not hit:
+                continue
+            command = [hit]
+            if Path(hit).stem.lower() in {"py", "pyw"}:
+                command.append("-3")
+            return command
+
+        return None
