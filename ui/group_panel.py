@@ -18,7 +18,10 @@ from PySide6.QtWidgets import (
 )
 
 from core.models import LauncherItem, LauncherType
-from core.windows_shortcuts import is_supported_executable_drop_path
+from core.windows_shortcuts import (
+    is_supported_executable_drop_path,
+    supported_target_file_dialog_filter,
+)
 from ui.card_widget import LauncherItemWidget
 
 
@@ -41,14 +44,16 @@ class ExeAddSlotCard(QFrame):
         plus_label.setAlignment(Qt.AlignCenter)
         plus_label.setFixedSize(44, 44)
 
-        title = QLabel("Add / Drop EXE")
+        title = QLabel("Add / Drop Target")
         title.setObjectName("AddSlotTitle")
 
-        subtitle = QLabel("Append executables or Windows shortcuts to the end of the EXE run order.")
+        subtitle = QLabel(
+            "Append Windows launch targets like EXE, shortcut, batch, PowerShell, URL, or Arduino sketch."
+        )
         subtitle.setObjectName("AddSlotSubtitle")
         subtitle.setWordWrap(True)
 
-        choose_button = QPushButton("Choose EXE")
+        choose_button = QPushButton("Choose Target")
         choose_button.setObjectName("GhostActionButton")
         choose_button.clicked.connect(self._choose_files)
 
@@ -123,9 +128,9 @@ class ExeAddSlotCard(QFrame):
     def _choose_files(self) -> None:
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Select Executable Files",
+            "Select Application Targets",
             str(Path.home()),
-            "Application Targets (*.exe *.lnk)",
+            supported_target_file_dialog_filter(),
         )
         if not file_paths:
             return

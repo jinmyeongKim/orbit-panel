@@ -26,7 +26,11 @@ from core.launcher import LauncherService
 from core.logger import LogStore
 from core.models import AppConfig, DialogDraft, LauncherItem, LauncherType, RunMode, ScriptType, UiState
 from core.paths import AppPaths
-from core.windows_shortcuts import is_supported_executable_drop_path, resolve_executable_drop_target
+from core.windows_shortcuts import (
+    is_supported_executable_drop_path,
+    resolve_executable_drop_target,
+    supported_target_summary,
+)
 from ui.add_edit_dialog import AddEditLauncherDialog
 from ui.group_panel import LauncherGroupPanel
 from ui.styles import APP_STYLESHEET
@@ -62,12 +66,12 @@ class ExternalDropOverlay(QFrame):
         eyebrow = QLabel("READY TO ADD")
         eyebrow.setObjectName("DropOverlayEyebrow")
 
-        title = QLabel("Drop EXE or shortcut here")
+        title = QLabel("Drop app target here")
         title.setObjectName("DropOverlayTitle")
         title.setWordWrap(True)
         title.setMinimumHeight(44)
 
-        subtitle = QLabel("Added to the bottom of the EXE list and saved immediately.")
+        subtitle = QLabel("Added to the bottom of the EXE group and saved immediately.")
         subtitle.setObjectName("DropOverlaySubtitle")
         subtitle.setWordWrap(True)
         subtitle.setMinimumHeight(28)
@@ -213,7 +217,7 @@ class MainWindow(QMainWindow):
         self.exe_group_panel = LauncherGroupPanel(
             group_type=LauncherType.EXE,
             title="EXE Group",
-            subtitle="EXE files are launched in the visible order.",
+            subtitle="Windows launch targets are opened in the visible order.",
         )
 
         self.url_group_panel.add_requested.connect(self._open_add_dialog)
@@ -757,9 +761,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Unsupported Drop",
-                f"Only .exe files or Windows shortcuts can be added.\n\nRejected:\n{rejected_list}",
+                f"Only supported Windows launch targets can be added ({supported_target_summary()}).\n\nRejected:\n{rejected_list}",
             )
-            self.logger.warning("Rejected non-EXE drop payload: %s", rejected_list)
+            self.logger.warning("Rejected unsupported launch-target payload: %s", rejected_list)
 
         added_count = 0
         for exe_path in exe_files:

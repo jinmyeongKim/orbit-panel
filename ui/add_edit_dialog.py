@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.models import DialogDraft, LauncherItem, LauncherType, RunMode, ScriptType
+from core.windows_shortcuts import supported_target_file_dialog_filter, supported_target_summary
 
 
 class AddEditLauncherDialog(QDialog):
@@ -240,7 +241,11 @@ class AddEditLauncherDialog(QDialog):
         self.target_label.setText(label_prefix)
         self.target_input.setPlaceholderText(
             "Optional. Used by the script if needed." if target_is_optional
-            else ("https://example.com" if current_type is LauncherType.URL else "C:/Tools/MyTool.exe or shortcut.lnk")
+            else (
+                "https://example.com"
+                if current_type is LauncherType.URL
+                else "C:/Tools/MyTool.exe, launch.cmd, sketch.ino, or shortcut.lnk"
+            )
         )
         self.title_input.setPlaceholderText(
             "Optional. Auto-filled from domain" if current_type is LauncherType.URL else "Optional. Auto-filled from file name"
@@ -273,7 +278,7 @@ class AddEditLauncherDialog(QDialog):
             self,
             "Select Application Target",
             str(Path.home()),
-            "Application Targets (*.exe *.lnk)",
+            supported_target_file_dialog_filter(),
         )
         if file_path:
             self.target_input.setText(file_path)
@@ -341,11 +346,22 @@ class AddEditLauncherDialog(QDialog):
             except OSError:
                 pass
 
-            if exe_path.suffix.lower() not in {".exe", ".lnk"}:
+            if exe_path.suffix.lower() not in {
+                ".exe",
+                ".com",
+                ".lnk",
+                ".bat",
+                ".cmd",
+                ".ps1",
+                ".msc",
+                ".url",
+                ".ino",
+                ".pde",
+            }:
                 QMessageBox.warning(
                     self,
                     "Validation Error",
-                    "Executable target must be a .exe file or Windows shortcut (.lnk).",
+                    f"Application target must be one of: {supported_target_summary()}",
                 )
                 return
             if not exe_path.exists():

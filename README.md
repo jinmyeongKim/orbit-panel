@@ -20,7 +20,7 @@ Each item can also run an optional follow-up script with one of these modes:
 - Premium dark dashboard UI with drag reordering
 - Separate URL and EXE run groups
 - `Run All`, per-group run, and selected-item run
-- EXE / shortcut add slot with drop overlay
+- Windows launch-target add slot with drop overlay
 - JSON persistence with automatic restore
 - Window size and position restore
 - Optional Python script execution per item

@@ -11,6 +11,7 @@ from typing import Sequence
 
 from core.action_dispatcher import ActionDispatcher
 from core.models import LauncherItem, LauncherType, RunMode, ScriptType
+from core.windows_shortcuts import SUPPORTED_EXECUTABLE_DROP_SUFFIXES, supported_target_summary
 
 
 @dataclass(slots=True)
@@ -126,47 +127,70 @@ class LauncherService:
     def _launch_exe(self, item: LauncherItem) -> ExecutionResult:
         raw_target = item.target.strip()
         if not raw_target:
-            message = f"Executable target is empty for '{item.title}'"
+            message = f"Application target is empty for '{item.title}'"
             self.logger.warning(message)
             return ExecutionResult(False, message)
 
-        expanded_path = Path(os.path.expandvars(raw_target)).expanduser()
+        target_path = Path(os.path.expandvars(raw_target)).expanduser()
         try:
-            exe_path = expanded_path.resolve(strict=False)
+            target_path = target_path.resolve(strict=False)
         except OSError:
-            exe_path = expanded_path
+            pass
 
-        suffix = exe_path.suffix.lower()
-        if suffix not in {".exe", ".lnk"}:
-            message = f"Target is not an EXE file or Windows shortcut: {exe_path}"
+        suffix = target_path.suffix.lower()
+        if suffix not in SUPPORTED_EXECUTABLE_DROP_SUFFIXES:
+            message = (
+                f"Unsupported application target '{target_path}'. "
+                f"Supported types: {supported_target_summary()}"
+            )
             self.logger.warning(message)
             return ExecutionResult(False, message)
 
-        if not exe_path.exists():
-            message = f"Executable target not found: {exe_path}"
+        if not target_path.exists():
+            message = f"Application target not found: {target_path}"
             self.logger.warning(message)
             return ExecutionResult(False, message)
 
-        if suffix == ".lnk":
-            self.logger.info("Launching shortcut target for '%s': %s", item.title, exe_path)
+        if suffix in {".exe", ".com"}:
+            self.logger.info("Launching executable target for '%s': %s", item.title, target_path)
             try:
-                os.startfile(str(exe_path))
+                subprocess.Popen([str(target_path)], cwd=str(target_path.parent))
             except OSError:
-                self.logger.exception("Shortcut launch failed for '%s'", item.title)
-                return ExecutionResult(False, f"Failed to launch shortcut: {exe_path}")
+                self.logger.exception("Executable launch failed for '%s'", item.title)
+                return ExecutionResult(False, f"Failed to launch executable: {target_path}")
 
-            self.logger.info("Shortcut launch succeeded for '%s'", item.title)
-            return ExecutionResult(True, f"Launched shortcut: {exe_path}")
+            self.logger.info("Executable launch succeeded for '%s'", item.title)
+            return ExecutionResult(True, f"Launched executable: {target_path}")
 
-        self.logger.info("Launching EXE target for '%s': %s", item.title, exe_path)
+        if suffix == ".ps1":
+            powershell_command = shutil.which("powershell.exe") or shutil.which("powershell")
+            if not powershell_command:
+                message = "PowerShell is required to launch .ps1 targets, but powershell.exe was not found."
+                self.logger.error(message)
+                return ExecutionResult(False, message)
+
+            self.logger.info("Launching PowerShell target for '%s': %s", item.title, target_path)
+            try:
+                subprocess.Popen(
+                    [powershell_command, "-ExecutionPolicy", "Bypass", "-File", str(target_path)],
+                    cwd=str(target_path.parent),
+                )
+            except OSError:
+                self.logger.exception("PowerShell target launch failed for '%s'", item.title)
+                return ExecutionResult(False, f"Failed to launch PowerShell target: {target_path}")
+
+            self.logger.info("PowerShell target launch succeeded for '%s'", item.title)
+            return ExecutionResult(True, f"Launched PowerShell target: {target_path}")
+
+        self.logger.info("Launching shell-handled target for '%s': %s", item.title, target_path)
         try:
-            subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
+            os.startfile(str(target_path))
         except OSError:
-            self.logger.exception("Executable launch failed for '%s'", item.title)
-            return ExecutionResult(False, f"Failed to launch EXE: {exe_path}")
+            self.logger.exception("Shell-handled target launch failed for '%s'", item.title)
+            return ExecutionResult(False, f"Failed to open target: {target_path}")
 
-        self.logger.info("EXE launch succeeded for '%s'", item.title)
-        return ExecutionResult(True, f"Launched EXE: {exe_path}")
+        self.logger.info("Shell-handled target launch succeeded for '%s'", item.title)
+        return ExecutionResult(True, f"Opened target: {target_path}")
 
     def _find_chrome(self) -> Path | None:
         candidates: list[Path] = []
