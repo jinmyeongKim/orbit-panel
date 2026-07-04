@@ -102,7 +102,6 @@ class ElidedLabel(QLabel):
 class LauncherItemWidget(QFrame):
     run_requested = Signal(str)
     selection_toggled = Signal(str, bool)
-    view_script_requested = Signal(str)
     edit_requested = Signal(str)
     delete_requested = Signal(str)
     reorder_started = Signal(str, object)
@@ -202,10 +201,6 @@ class LauncherItemWidget(QFrame):
         self.select_button.setChecked(self._initial_selected)
         self.select_button.toggled.connect(self._handle_selection_toggled)
 
-        script_button = QPushButton("Script")
-        script_button.setObjectName("ItemSecondaryAction")
-        script_button.clicked.connect(lambda: self.view_script_requested.emit(self.item.id))
-
         edit_button = QPushButton("Edit")
         edit_button.setObjectName("ItemSecondaryAction")
         edit_button.clicked.connect(lambda: self.edit_requested.emit(self.item.id))
@@ -227,7 +222,6 @@ class LauncherItemWidget(QFrame):
         secondary_actions_layout = QHBoxLayout(self.secondary_actions_host)
         secondary_actions_layout.setContentsMargins(0, 0, 0, 0)
         secondary_actions_layout.setSpacing(8)
-        secondary_actions_layout.addWidget(script_button)
         secondary_actions_layout.addWidget(edit_button)
         secondary_actions_layout.addWidget(delete_button)
 

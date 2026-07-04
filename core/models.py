@@ -2,8 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, TypeVar
+from urllib.parse import urlparse
 import uuid
+
+_EnumT = TypeVar("_EnumT", bound=Enum)
+
+
+def _enum_or_none(enum_cls: type[_EnumT], value: Any) -> _EnumT | None:
+    try:
+        return enum_cls(value)
+    except ValueError:
+        return None
+
+
+def suggest_url_title(target: str) -> str:
+    """Derive a display title from a URL, e.g. 'https://www.foo.com/x' -> 'foo.com'."""
+    host = urlparse(target).netloc.strip().lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host or target
 
 
 class LauncherType(str, Enum):
@@ -39,14 +57,13 @@ class DialogDraft:
             return cls()
 
         raw_type = str(raw.get("type") or LauncherType.URL.value).strip().lower()
-        launcher_type = LauncherType(raw_type) if raw_type in LauncherType._value2member_map_ else LauncherType.URL
+        launcher_type = _enum_or_none(LauncherType, raw_type) or LauncherType.URL
         raw_run_mode = str(raw.get("run_mode") or RunMode.TARGET_ONLY.value).strip().lower()
-        run_mode = RunMode(raw_run_mode) if raw_run_mode in RunMode._value2member_map_ else RunMode.TARGET_ONLY
+        run_mode = _enum_or_none(RunMode, raw_run_mode) or RunMode.TARGET_ONLY
         raw_script = str(raw.get("script") or "").strip()
         raw_script_type = str(raw.get("script_type") or "").strip().lower()
-        if raw_script_type in ScriptType._value2member_map_:
-            script_type = ScriptType(raw_script_type)
-        else:
+        script_type = _enum_or_none(ScriptType, raw_script_type)
+        if script_type is None:
             script_type = ScriptType.BUILT_IN_ACTION if raw_script else ScriptType.NONE
 
         return cls(
@@ -177,30 +194,32 @@ class LauncherItem:
 
         if not title:
             raise ValueError("Launcher item is missing a title.")
-        if type_value not in LauncherType._value2member_map_:
+        launcher_type = _enum_or_none(LauncherType, type_value)
+        if launcher_type is None:
             raise ValueError(f"Unsupported launcher type: {type_value!r}")
         if script_type_value:
-            if script_type_value not in ScriptType._value2member_map_:
+            script_type = _enum_or_none(ScriptType, script_type_value)
+            if script_type is None:
                 raise ValueError(f"Unsupported script type: {script_type_value!r}")
-            script_type = ScriptType(script_type_value)
         else:
             script_type = ScriptType.BUILT_IN_ACTION if script else ScriptType.NONE
-        if run_mode_value not in RunMode._value2member_map_:
+        run_mode = _enum_or_none(RunMode, run_mode_value)
+        if run_mode is None:
             raise ValueError(f"Unsupported run mode: {run_mode_value!r}")
-        if not target and run_mode_value != RunMode.SCRIPT_ONLY.value:
+        if not target and run_mode is not RunMode.SCRIPT_ONLY:
             raise ValueError("Launcher item is missing a target.")
-        if not script and run_mode_value in {RunMode.TARGET_THEN_SCRIPT.value, RunMode.SCRIPT_ONLY.value}:
+        if not script and run_mode in {RunMode.TARGET_THEN_SCRIPT, RunMode.SCRIPT_ONLY}:
             raise ValueError("Launcher item is missing a script for the selected run mode.")
 
         return cls(
             id=item_id,
             title=title,
             description=description,
-            type=LauncherType(type_value),
+            type=launcher_type,
             target=target,
             script=script,
             script_type=script_type,
-            run_mode=RunMode(run_mode_value),
+            run_mode=run_mode,
             icon=icon_value,
             enabled=enabled,
         )
@@ -246,9 +265,8 @@ class LauncherItem:
         return self.script.strip()
 
     def matches_query(self, query: str) -> bool:
-        normalized = query.strip().lower()
-        if not normalized:
+        query = query.strip().lower()
+        if not query:
             return True
-
-        haystack = "\n".join((self.title, self.description, self.target)).lower()
-        return normalized in haystack
+        haystack = " ".join((self.title, self.description, self.target, self.script))
+        return query in haystack.lower()

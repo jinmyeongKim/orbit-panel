@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QDialog,
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
@@ -225,7 +226,6 @@ class MainWindow(QMainWindow):
         self.url_group_panel.run_all_requested.connect(self._run_group)
         self.url_group_panel.run_item_requested.connect(self._run_single_item)
         self.url_group_panel.selection_changed.connect(self._set_item_selected)
-        self.url_group_panel.view_script_requested.connect(self._view_item_script)
         self.url_group_panel.edit_item_requested.connect(self._edit_card)
         self.url_group_panel.delete_item_requested.connect(self._delete_card)
         self.url_group_panel.item_order_changed.connect(self._reorder_group)
@@ -234,7 +234,6 @@ class MainWindow(QMainWindow):
         self.exe_group_panel.run_all_requested.connect(self._run_group)
         self.exe_group_panel.run_item_requested.connect(self._run_single_item)
         self.exe_group_panel.selection_changed.connect(self._set_item_selected)
-        self.exe_group_panel.view_script_requested.connect(self._view_item_script)
         self.exe_group_panel.edit_item_requested.connect(self._edit_card)
         self.exe_group_panel.delete_item_requested.connect(self._delete_card)
         self.exe_group_panel.item_order_changed.connect(self._reorder_group)
@@ -380,7 +379,7 @@ class MainWindow(QMainWindow):
         )
         dialog_result = dialog.exec()
         self._ui_state.dialog_draft = dialog.draft_state()
-        if dialog_result != dialog.Accepted:
+        if dialog_result != QDialog.Accepted:
             return
 
         item = dialog.result_item()
@@ -438,7 +437,7 @@ class MainWindow(QMainWindow):
         )
         dialog_result = dialog.exec()
         self._ui_state.dialog_draft = dialog.draft_state()
-        if dialog_result != dialog.Accepted:
+        if dialog_result != QDialog.Accepted:
             return
 
         result_item = dialog.result_item()
@@ -570,21 +569,6 @@ class MainWindow(QMainWindow):
             f"Ran '{item.title}' | target: {'ok' if report.target_result.success else 'failed'} | "
             f"action: {'ok' if report.action_result.success else 'failed'}"
         )
-
-    def _view_item_script(self, item_id: str) -> None:
-        item = self._find_item(item_id)
-        if item is None:
-            return
-
-        if not item.enabled:
-            self.logger.warning("Ignored script-only run for disabled item '%s'", item.title)
-            self._set_status(f"'{item.title}' is disabled.")
-            return
-
-        self.logger.info("Script-only run requested: %s (%s)", item.title, item.script_name)
-        report = self.launcher_service.execute_script_only(item)
-        self._log_item_report(report)
-        self._set_status(f"Script run for '{item.title}': {report.action_result.message}")
 
     def _run_group(self, group_type_value: str) -> None:
         group_type = LauncherType(group_type_value)

@@ -106,7 +106,7 @@ class AddEditLauncherDialog(QDialog):
             )
 
         self.python_script_input = QLineEdit()
-        self.python_script_input.setPlaceholderText(r"C:/Automation/login_notion.py")
+        self.python_script_input.setPlaceholderText(r"scripts/examples/browser_login_stub.py")
         self.python_script_browse_button = QPushButton("Browse")
         self.python_script_browse_button.clicked.connect(self._browse_python_script)
 
@@ -265,6 +265,11 @@ class AddEditLauncherDialog(QDialog):
             else:
                 action_placeholder = "Required. Runs without launching the target."
             self.action_script_combo.lineEdit().setPlaceholderText(action_placeholder)
+
+        if current_script_type is ScriptType.PYTHON_FILE and not self.python_script_input.text().strip():
+            self.python_script_input.setPlaceholderText(
+                r"scripts/examples/context_dump.py or C:/Automation/login_site.py"
+            )
 
         self.script_type_combo.setEnabled(True)
 

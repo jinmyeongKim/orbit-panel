@@ -58,8 +58,10 @@ class ConfigLoader:
         items: list[LauncherItem]
         ui_state = self.default_ui_state()
 
+        raw_items: Any
         if isinstance(payload, list):
-            items = self._parse_items(payload)
+            raw_items = payload
+            items = self._parse_items(raw_items)
             self.logger.info("Loaded legacy launcher config format from JSON")
         elif isinstance(payload, dict):
             raw_items = payload.get("launcher_items", [])
@@ -72,7 +74,8 @@ class ConfigLoader:
             self.save_config(config)
             return config
 
-        if not items:
+        if not items and raw_items:
+            # Every stored item failed to parse. An intentionally empty list stays empty.
             defaults = self.default_items()
             config = AppConfig(launcher_items=defaults, ui_state=self.default_ui_state())
             self.save_config(config)
@@ -92,13 +95,20 @@ class ConfigLoader:
         }
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Write to a temp file and swap it in so a crash mid-write never corrupts the config.
+        temp_path = self.config_path.with_name(f"{self.config_path.name}.tmp")
         try:
-            self.config_path.write_text(
+            temp_path.write_text(
                 json.dumps(payload, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+            os.replace(temp_path, self.config_path)
         except OSError:
             self.logger.exception("Failed to save launcher items to %s", self.config_path)
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise
 
         self.logger.info(

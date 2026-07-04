@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
 import os
 from pathlib import Path
@@ -8,9 +9,11 @@ import shutil
 import subprocess
 import sys
 from typing import Sequence
+import webbrowser
 
 from core.action_dispatcher import ActionDispatcher
 from core.models import LauncherItem, LauncherType, RunMode, ScriptType
+from core.paths import AppPaths
 from core.windows_shortcuts import SUPPORTED_EXECUTABLE_DROP_SUFFIXES, supported_target_summary
 
 
@@ -34,15 +37,21 @@ class ItemExecutionReport:
 class LauncherService:
     """Execute launcher targets and then run the mapped Python action."""
 
-    def __init__(self, logger: logging.Logger, dispatcher: ActionDispatcher) -> None:
+    def __init__(
+        self,
+        logger: logging.Logger,
+        dispatcher: ActionDispatcher,
+        app_paths: AppPaths | None = None,
+    ) -> None:
         self.logger = logger
         self.dispatcher = dispatcher
+        self.app_paths = app_paths
         self._chrome_path = self._find_chrome()
 
         if self._chrome_path:
             self.logger.info("Detected Chrome at %s", self._chrome_path)
         else:
-            self.logger.info("Chrome not found. URL launches will fail until chrome.exe is available.")
+            self.logger.info("Chrome not found. URL items will open in the default browser.")
 
     def launch_target(self, item: LauncherItem) -> ExecutionResult:
         if item.type is LauncherType.URL:
@@ -86,13 +95,6 @@ class LauncherService:
             action_result=action_result,
         )
 
-    def execute_script_only(self, item: LauncherItem) -> ItemExecutionReport:
-        return ItemExecutionReport(
-            item=item,
-            target_result=ExecutionResult(True, "Target skipped for explicit script run."),
-            action_result=self.run_action(item),
-        )
-
     def execute_group(self, items: Sequence[LauncherItem]) -> list[ItemExecutionReport]:
         reports: list[ItemExecutionReport] = []
         for item in items:
@@ -109,20 +111,31 @@ class LauncherService:
         self.logger.info("Launching URL target for '%s': %s", item.title, target)
 
         chrome_path = self._chrome_path or self._find_chrome()
-        if not chrome_path:
-            message = "Chrome is required for URL items, but chrome.exe was not found."
+        if chrome_path:
+            self._chrome_path = chrome_path
+            try:
+                subprocess.Popen([str(chrome_path), "--new-tab", target], cwd=str(chrome_path.parent))
+            except OSError:
+                self.logger.exception("Chrome launch failed for '%s'", item.title)
+                return ExecutionResult(False, f"Failed to open URL in Chrome: {target}")
+
+            self.logger.info("URL launch succeeded for '%s' via Chrome", item.title)
+            return ExecutionResult(True, f"Opened URL in Chrome: {target}")
+
+        self.logger.info("Chrome not found. Opening '%s' in the default browser.", item.title)
+        try:
+            opened = webbrowser.open(target)
+        except Exception:
+            self.logger.exception("Default browser launch failed for '%s'", item.title)
+            opened = False
+
+        if not opened:
+            message = f"Failed to open URL in the default browser: {target}"
             self.logger.error(message)
             return ExecutionResult(False, message)
 
-        try:
-            subprocess.Popen([str(chrome_path), "--new-tab", target], cwd=str(chrome_path.parent))
-        except OSError:
-            self.logger.exception("Chrome launch failed for '%s'", item.title)
-            return ExecutionResult(False, f"Failed to open URL in Chrome: {target}")
-
-        message = f"Opened URL in Chrome: {target}"
-        self.logger.info("URL launch succeeded for '%s' via Chrome", item.title)
-        return ExecutionResult(True, message)
+        self.logger.info("URL launch succeeded for '%s' via default browser", item.title)
+        return ExecutionResult(True, f"Opened URL in default browser: {target}")
 
     def _launch_exe(self, item: LauncherItem) -> ExecutionResult:
         raw_target = item.target.strip()
@@ -244,7 +257,31 @@ class LauncherService:
         env["ORBIT_PANEL_ITEM_TITLE"] = item.title
         env["ORBIT_PANEL_ITEM_TYPE"] = item.type.value
         env["ORBIT_PANEL_ITEM_TARGET"] = item.target
+        env["ORBIT_PANEL_ITEM_ENABLED"] = "true" if item.enabled else "false"
         env["ORBIT_PANEL_RUN_MODE"] = item.run_mode.value
+        env["ORBIT_PANEL_SCRIPT_TYPE"] = item.script_type.value
+        env["ORBIT_PANEL_SCRIPT_VALUE"] = item.script_name
+        if self.app_paths is not None:
+            env["ORBIT_PANEL_BASE_DIR"] = str(self.app_paths.base_dir)
+            env["ORBIT_PANEL_RUNTIME_DIR"] = str(self.app_paths.runtime_dir)
+            env["ORBIT_PANEL_CONFIG_FILE"] = str(self.app_paths.config_file)
+            env["ORBIT_PANEL_LOG_DIR"] = str(self.app_paths.logs_dir)
+            helpers_dir = self.app_paths.base_dir / "scripts"
+            if helpers_dir.exists():
+                env["ORBIT_PANEL_HELPERS_DIR"] = str(helpers_dir)
+        env["ORBIT_PANEL_ITEM_CONTEXT"] = json.dumps(
+            {
+                "id": item.id,
+                "title": item.title,
+                "type": item.type.value,
+                "target": item.target,
+                "run_mode": item.run_mode.value,
+                "script_type": item.script_type.value,
+                "script": item.script_name,
+                "enabled": item.enabled,
+            },
+            ensure_ascii=False,
+        )
 
         command = [*python_command, str(script_path)]
         self.logger.info("Running Python script for '%s': %s", item.title, command)

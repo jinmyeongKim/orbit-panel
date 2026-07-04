@@ -33,13 +33,6 @@ def main() -> int:
     """Start the Orbit Panel desktop application."""
     app_paths = AppPaths.discover()
     app_paths.ensure_runtime_dirs()
-    set_app_user_model_id("OrbitPanel.Desktop")
-
-    app = QApplication(sys.argv)
-    app.setApplicationName("Orbit Panel")
-    app.setOrganizationName("Orbit Panel")
-    app.setStyle("Fusion")
-    app.setFont(_build_app_font())
 
     log_store = LogStore()
     logger = configure_logging(log_store, app_paths.log_file)
@@ -47,6 +40,12 @@ def main() -> int:
     logger.info("Runtime directory: %s", app_paths.runtime_dir)
     logger.info("Config file: %s", app_paths.config_file)
     set_app_user_model_id("OrbitPanel.Desktop", logger)
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("Orbit Panel")
+    app.setOrganizationName("Orbit Panel")
+    app.setStyle("Fusion")
+    app.setFont(_build_app_font())
 
     app_icon = QIcon(str(app_paths.app_icon_file))
     logger.info("App icon path: %s", app_paths.app_icon_file)
@@ -63,7 +62,7 @@ def main() -> int:
         legacy_config_path=app_paths.legacy_config_file,
     )
     dispatcher = ActionDispatcher(logger)
-    launcher_service = LauncherService(logger, dispatcher)
+    launcher_service = LauncherService(logger, dispatcher, app_paths=app_paths)
 
     window = MainWindow(
         config_loader=config_loader,

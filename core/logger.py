@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
@@ -57,7 +58,12 @@ def configure_logging(store: LogStore, log_file: Path) -> logging.Logger:
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
 
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=1_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
     file_handler.setFormatter(formatter)
 
     ui_handler = QtLogHandler(store)

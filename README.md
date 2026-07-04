@@ -79,6 +79,14 @@ Each item can optionally run:
 - a built-in action
 - a Python file path
 
+For real automation, the most useful setup is usually:
+
+- `Run Mode = Script Only` for browser login / web automation
+- `Run Mode = Target Then Script` for app launch followed by post-processing
+- `Script Type = Python File`
+
+Sample scripts live under `scripts/examples/`.
+
 When a Python file is used, Orbit Panel passes these environment variables:
 
 - `ORBIT_PANEL_ITEM_ID`
@@ -86,6 +94,24 @@ When a Python file is used, Orbit Panel passes these environment variables:
 - `ORBIT_PANEL_ITEM_TYPE`
 - `ORBIT_PANEL_ITEM_TARGET`
 - `ORBIT_PANEL_RUN_MODE`
+- `ORBIT_PANEL_SCRIPT_TYPE`
+- `ORBIT_PANEL_SCRIPT_VALUE`
+- `ORBIT_PANEL_ITEM_ENABLED`
+- `ORBIT_PANEL_ITEM_CONTEXT`
+- `ORBIT_PANEL_BASE_DIR`
+- `ORBIT_PANEL_RUNTIME_DIR`
+- `ORBIT_PANEL_CONFIG_FILE`
+- `ORBIT_PANEL_LOG_DIR`
+- `ORBIT_PANEL_HELPERS_DIR` when `scripts/` exists beside the app
+
+Quick starting points:
+
+- `scripts/examples/context_dump.py`
+  confirms what Orbit Panel sends into a Python automation
+- `scripts/examples/browser_login_stub.py`
+  Playwright-based browser automation template for login flows
+- `scripts/examples/naver_login.py`
+  Naver-focused login automation example driven by environment variables
 
 ## License
 
