@@ -8,7 +8,16 @@ from pathlib import Path
 import shutil
 from typing import Any, Sequence
 
-from core.models import AppConfig, LauncherItem, LauncherType, RunMode, ScriptType, UiState
+from core.models import (
+    AppConfig,
+    AppSettings,
+    LauncherItem,
+    LauncherType,
+    RunMode,
+    Scenario,
+    ScriptType,
+    UiState,
+)
 
 
 class ConfigLoader:
@@ -57,6 +66,8 @@ class ConfigLoader:
 
         items: list[LauncherItem]
         ui_state = self.default_ui_state()
+        scenarios: list[Scenario] = []
+        app_settings = AppSettings()
 
         raw_items: Any
         if isinstance(payload, list):
@@ -67,6 +78,8 @@ class ConfigLoader:
             raw_items = payload.get("launcher_items", [])
             items = self._parse_items(raw_items)
             ui_state = UiState.from_dict(payload.get("ui_state"))
+            scenarios = self._parse_scenarios(payload.get("scenarios"))
+            app_settings = AppSettings.from_dict(payload.get("app_settings"))
         else:
             self.logger.warning("Launcher config root must be an object or list. Restoring defaults.")
             defaults = self.default_items()
@@ -82,8 +95,15 @@ class ConfigLoader:
             self.logger.warning("No valid launcher items found. Restored default cards.")
             return config
 
-        self.logger.info("Loaded %s launcher items from JSON", len(items))
-        return AppConfig(launcher_items=items, ui_state=ui_state)
+        self.logger.info(
+            "Loaded %s launcher items and %s scenarios from JSON", len(items), len(scenarios)
+        )
+        return AppConfig(
+            launcher_items=items,
+            ui_state=ui_state,
+            scenarios=scenarios,
+            app_settings=app_settings,
+        )
 
     def load_items(self) -> list[LauncherItem]:
         return self.load_config().launcher_items
@@ -92,6 +112,8 @@ class ConfigLoader:
         payload = {
             "launcher_items": [item.to_dict() for item in config.launcher_items],
             "ui_state": config.ui_state.to_dict(),
+            "scenarios": [scenario.to_dict() for scenario in config.scenarios],
+            "app_settings": config.app_settings.to_dict(),
         }
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -118,6 +140,8 @@ class ConfigLoader:
 
     def save_items(self, items: Sequence[LauncherItem]) -> None:
         current_ui_state = self.default_ui_state()
+        current_scenarios: list[Scenario] = []
+        current_settings = AppSettings()
         if self.config_path.exists():
             try:
                 current_payload = json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -125,8 +149,17 @@ class ConfigLoader:
                 current_payload = None
             if isinstance(current_payload, dict):
                 current_ui_state = UiState.from_dict(current_payload.get("ui_state"))
+                current_scenarios = self._parse_scenarios(current_payload.get("scenarios"))
+                current_settings = AppSettings.from_dict(current_payload.get("app_settings"))
 
-        self.save_config(AppConfig(launcher_items=list(items), ui_state=current_ui_state))
+        self.save_config(
+            AppConfig(
+                launcher_items=list(items),
+                ui_state=current_ui_state,
+                scenarios=current_scenarios,
+                app_settings=current_settings,
+            )
+        )
 
     def default_items(self) -> list[LauncherItem]:
         windows_dir = Path(os.environ.get("WINDIR", "C:/Windows"))
@@ -141,9 +174,9 @@ class ConfigLoader:
                 description="Open the daily task orbit dashboard and trigger the URL action hook.",
                 type=LauncherType.URL,
                 target="https://example.com/task-orbit",
-                script="open_task_orbit_action",
-                script_type=ScriptType.BUILT_IN_ACTION,
-                run_mode=RunMode.TARGET_THEN_SCRIPT,
+                script="",
+                script_type=ScriptType.NONE,
+                run_mode=RunMode.TARGET_ONLY,
                 icon="",
                 enabled=True,
             ),
@@ -153,7 +186,7 @@ class ConfigLoader:
                 description="Launch a Windows executable example and run the mail saver action placeholder.",
                 type=LauncherType.EXE,
                 target=str(exe_target),
-                script="run_mail_saver_action",
+                script="wait_2_seconds",
                 script_type=ScriptType.BUILT_IN_ACTION,
                 run_mode=RunMode.TARGET_THEN_SCRIPT,
                 icon="",
@@ -175,6 +208,22 @@ class ConfigLoader:
 
     def default_ui_state(self) -> UiState:
         return UiState()
+
+    def _parse_scenarios(self, raw_scenarios: Any) -> list[Scenario]:
+        if raw_scenarios is None:
+            return []
+        if not isinstance(raw_scenarios, list):
+            self.logger.warning("scenarios must be a list. Received %s", type(raw_scenarios).__name__)
+            return []
+
+        scenarios: list[Scenario] = []
+        for index, raw_scenario in enumerate(raw_scenarios):
+            try:
+                scenarios.append(Scenario.from_dict(raw_scenario))
+            except Exception as exc:
+                self.logger.warning("Skipping invalid scenario at index %s: %s", index, exc)
+
+        return scenarios
 
     def _parse_items(self, raw_items: Any) -> list[LauncherItem]:
         if not isinstance(raw_items, list):

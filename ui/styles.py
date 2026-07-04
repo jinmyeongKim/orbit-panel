@@ -64,6 +64,52 @@ QFrame#InsertIndicator {
     border-radius: 1px;
 }
 
+QFrame#ScenarioChip {
+    background-color: rgba(16, 22, 31, 0.98);
+    border: 1px solid #1f2d3e;
+    border-radius: 18px;
+}
+
+QFrame#ScenarioChip:hover {
+    border: 1px solid #31465f;
+}
+
+QLabel#ScenarioName {
+    color: #f8fafc;
+    font-size: 10.5pt;
+    font-weight: 700;
+}
+
+QLabel#ScenarioMeta {
+    color: #8fa2b7;
+    font-size: 8.8pt;
+}
+
+QFrame#ScenarioStepRow {
+    background-color: rgba(16, 22, 31, 0.98);
+    border: 1px solid #1f2d3e;
+    border-radius: 16px;
+}
+
+QDoubleSpinBox {
+    background-color: #111826;
+    border: 1px solid #243245;
+    border-radius: 12px;
+    padding: 8px 10px;
+    color: #f5f7fb;
+}
+
+QDoubleSpinBox:focus {
+    border: 1px solid #6ce0e5;
+}
+
+QDoubleSpinBox::up-button,
+QDoubleSpinBox::down-button {
+    width: 18px;
+    border: none;
+    background: transparent;
+}
+
 QLabel#DropOverlayEyebrow {
     color: #79e3e7;
     font-size: 9pt;

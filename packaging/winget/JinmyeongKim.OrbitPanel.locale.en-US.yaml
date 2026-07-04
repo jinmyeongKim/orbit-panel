@@ -1,0 +1,23 @@
+# Default locale manifest template for winget-pkgs.
+# Replace <VERSION> before submitting. See docs/winget-publish.md.
+PackageIdentifier: JinmyeongKim.OrbitPanel
+PackageVersion: <VERSION>
+PackageLocale: en-US
+Publisher: Jinmyeong Kim
+PublisherUrl: https://github.com/jinmyeongKim
+PackageName: Orbit Panel
+PackageUrl: https://github.com/jinmyeongKim/orbit-panel
+License: MIT
+LicenseUrl: https://github.com/jinmyeongKim/orbit-panel/blob/main/LICENSE
+ShortDescription: Windows productivity launcher that runs URL/EXE groups and one-click automation scenarios.
+Description: |-
+  Orbit Panel keeps ordered URL and EXE launch groups in one dashboard.
+  Items can run follow-up automation (built-in actions or Python scripts),
+  and scenarios chain multiple items into a one-click routine with per-step delays.
+  It stays available from the system tray with a global Ctrl+Alt+O hotkey.
+Tags:
+- launcher
+- productivity
+- automation
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

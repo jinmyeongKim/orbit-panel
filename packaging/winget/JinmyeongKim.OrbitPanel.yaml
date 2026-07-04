@@ -1,0 +1,7 @@
+# Version manifest template for winget-pkgs.
+# Replace <VERSION> before submitting. See docs/winget-publish.md.
+PackageIdentifier: JinmyeongKim.OrbitPanel
+PackageVersion: <VERSION>
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

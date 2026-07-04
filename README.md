@@ -19,12 +19,35 @@ Each item can also run an optional follow-up script with one of these modes:
 
 - Premium dark dashboard UI with drag reordering
 - Separate URL and EXE run groups
+- **Scenarios**: chain items into a one-click routine with per-step delays
+  (e.g. a "Morning Routine" that opens the portal, waits, then launches apps)
+- **System tray**: closing the window keeps Orbit Panel running in the tray;
+  scenarios and Run All are available from the tray menu
+- **Global hotkey** `Ctrl+Alt+O` shows / hides the window from anywhere
+- **Start with Windows** (optional, toggled in Settings)
+- **Browser choice** for URL items: system default, Chrome, Edge, or a custom executable
 - `Run All`, per-group run, and selected-item run
 - Windows launch-target add slot with drop overlay
 - JSON persistence with automatic restore
 - Window size and position restore
-- Optional Python script execution per item
+- Optional automation per item: built-in actions or Python scripts
 - Windows app icon and PyInstaller packaging support
+
+한국어 자동화 가이드(시나리오, GitHub 자동 로그인, 회사 그룹웨어 예약 자동화):
+[docs/automation-guide.md](docs/automation-guide.md)
+
+## Built-in actions
+
+Each item can run one of these after (or instead of) its target — no Python required:
+
+| Action | What it does |
+|--------|--------------|
+| `wait_2_seconds` / `wait_5_seconds` | Pause, e.g. to let a page or app finish loading |
+| `copy_target_to_clipboard` | Copy the item URL/path to the clipboard |
+| `copy_title_to_clipboard` | Copy the item title to the clipboard |
+| `open_target_folder` | Open Explorer with the target file selected |
+| `focus_window_matching_title` | Bring the window whose title contains the item title to the front |
+| `browser_login_placeholder_action` | Template hook for Playwright login automation |
 
 ## Requirements
 
@@ -65,6 +88,9 @@ The packaged executable is written to `dist/Orbit Panel.exe`.
 Prebuilt Windows executables are published on the GitHub Releases page:
 
 - https://github.com/jinmyeongKim/orbit-panel/releases
+
+winget manifests live under `packaging/winget/`; see `docs/winget-publish.md`
+for the submission steps.
 
 ## Runtime data
 
@@ -108,6 +134,10 @@ Quick starting points:
 
 - `scripts/examples/context_dump.py`
   confirms what Orbit Panel sends into a Python automation
+- `scripts/examples/github_login.py`
+  working GitHub auto-login: keeps a persistent browser profile so GitHub opens
+  already logged in, with optional credential autofill from Windows Credential
+  Manager (`--setup` to store credentials; supports TOTP 2FA via pyotp)
 - `scripts/examples/browser_login_stub.py`
   Playwright-based browser automation template for login flows
 - `scripts/examples/naver_login.py`

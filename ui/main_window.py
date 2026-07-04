@@ -6,27 +6,43 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QIcon
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
 
 from core.action_dispatcher import ActionDispatcher
+from core.autostart import set_autostart_enabled
 from core.config_loader import ConfigLoader
+from core.global_hotkey import HOTKEY_LABEL, GlobalHotkeyFilter
 from core.launcher import LauncherService
 from core.logger import LogStore
-from core.models import AppConfig, DialogDraft, LauncherItem, LauncherType, RunMode, ScriptType, UiState
+from core.models import (
+    AppConfig,
+    AppSettings,
+    DialogDraft,
+    LauncherItem,
+    LauncherType,
+    RunMode,
+    Scenario,
+    ScriptType,
+    UiState,
+)
 from core.paths import AppPaths
+from core.scenario_runner import ScenarioRunner
 from core.windows_shortcuts import (
     is_supported_executable_drop_path,
     resolve_executable_drop_target,
@@ -34,6 +50,9 @@ from core.windows_shortcuts import (
 )
 from ui.add_edit_dialog import AddEditLauncherDialog
 from ui.group_panel import LauncherGroupPanel
+from ui.scenario_dialog import ScenarioDialog
+from ui.scenario_panel import ScenarioStrip
+from ui.settings_dialog import SettingsDialog
 from ui.styles import APP_STYLESHEET
 
 
@@ -139,8 +158,19 @@ class MainWindow(QMainWindow):
         self._filtered_items: list[LauncherItem] = []
         self._selected_item_ids: set[str] = set()
         self._ui_state = UiState()
+        self._scenarios: list[Scenario] = []
+        self._app_settings = AppSettings()
         self._last_status_message = ""
         self._external_drop_targets: set[int] = set()
+        self._quit_requested = False
+        self._tray_notice_shown = False
+        self._tray: QSystemTrayIcon | None = None
+        self._hotkey_filter: GlobalHotkeyFilter | None = None
+
+        self._scenario_runner = ScenarioRunner(launcher_service, logger, self)
+        self._scenario_runner.step_started.connect(self._on_scenario_step_started)
+        self._scenario_runner.step_finished.connect(self._log_item_report)
+        self._scenario_runner.scenario_finished.connect(self._on_scenario_finished)
 
         self.setWindowTitle("Orbit Panel")
         self.setMinimumSize(1280, 860)
@@ -149,6 +179,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(APP_STYLESHEET)
 
         self._build_ui()
+        self._build_tray()
         self._load_items()
 
     def _build_ui(self) -> None:
@@ -196,12 +227,23 @@ class MainWindow(QMainWindow):
         self.run_selected_button.setObjectName("FlatActionButton")
         self.run_selected_button.clicked.connect(self._run_selected_items)
 
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("FlatActionButton")
+        self.settings_button.clicked.connect(self._open_settings)
+
         hero_actions.addStretch(1)
+        hero_actions.addWidget(self.settings_button, 0, Qt.AlignRight)
         hero_actions.addWidget(self.run_selected_button, 0, Qt.AlignRight)
         hero_actions.addWidget(self.run_all_button, 0, Qt.AlignRight)
         hero_actions.addStretch(1)
 
         hero_layout.addLayout(hero_actions, 0)
+
+        self.scenario_strip = ScenarioStrip()
+        self.scenario_strip.run_requested.connect(self._run_scenario)
+        self.scenario_strip.edit_requested.connect(self._edit_scenario)
+        self.scenario_strip.delete_requested.connect(self._delete_scenario)
+        self.scenario_strip.create_requested.connect(self._create_scenario)
 
         self.groups_container = QWidget()
         self.groups_container.setObjectName("GroupsContainer")
@@ -245,6 +287,7 @@ class MainWindow(QMainWindow):
         self.drop_overlay = ExternalDropOverlay(self.groups_container)
 
         root_layout.addWidget(hero_panel)
+        root_layout.addWidget(self.scenario_strip)
         root_layout.addWidget(self.groups_container, 1)
 
         self.setCentralWidget(root)
@@ -255,9 +298,14 @@ class MainWindow(QMainWindow):
         config = self.config_loader.load_config()
         self._items = config.launcher_items
         self._ui_state = config.ui_state
+        self._scenarios = config.scenarios
+        self._app_settings = config.app_settings
+        self.launcher_service.app_settings = self._app_settings
         self._restore_ui_state()
         self._set_status(f"Loaded {len(self._items)} Orbit Panel items.")
         self._apply_filter()
+        self._refresh_scenarios()
+        self._apply_hotkey_state()
 
     def _apply_filter(self, *_args) -> None:
         query = ""
@@ -473,16 +521,34 @@ class MainWindow(QMainWindow):
 
         self._selected_item_ids.discard(item.id)
         self._items = [existing_item for existing_item in self._items if existing_item.id != item_id]
+
+        scenarios_changed = False
+        for scenario in self._scenarios:
+            remaining_steps = [step for step in scenario.steps if step.item_id != item_id]
+            if len(remaining_steps) != len(scenario.steps):
+                scenario.steps = remaining_steps
+                scenarios_changed = True
+                self.logger.info(
+                    "Removed deleted item '%s' from scenario '%s'", item.title, scenario.name
+                )
+
         self.logger.info("Orbit Panel item deleted: %s", item.title)
         if self._save_items():
             self._set_status(f"Deleted '{item.title}'.")
             self._apply_filter()
+            if scenarios_changed:
+                self._refresh_scenarios()
 
     def _save_items(self) -> bool:
         self._ui_state = self._capture_ui_state()
         try:
             self.config_loader.save_config(
-                AppConfig(launcher_items=list(self._items), ui_state=self._ui_state)
+                AppConfig(
+                    launcher_items=list(self._items),
+                    ui_state=self._ui_state,
+                    scenarios=list(self._scenarios),
+                    app_settings=self._app_settings,
+                )
             )
         except OSError as exc:
             QMessageBox.critical(
@@ -496,12 +562,42 @@ class MainWindow(QMainWindow):
         return True
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.logger.info("Close requested. Persisting Orbit Panel state to JSON.")
+        if (
+            not self._quit_requested
+            and self._app_settings.minimize_to_tray
+            and self._tray is not None
+            and self._tray.isVisible()
+        ):
+            self.logger.info("Close requested. Hiding to the system tray.")
+            event.ignore()
+            self.hide()
+            if not self._tray_notice_shown:
+                self._tray.showMessage(
+                    "Orbit Panel",
+                    f"Still running in the tray. Press {HOTKEY_LABEL} or click the tray icon to reopen.",
+                    QSystemTrayIcon.Information,
+                    4000,
+                )
+                self._tray_notice_shown = True
+            return
+
+        self.logger.info("Quit requested. Persisting Orbit Panel state to JSON.")
         if not self._save_items():
+            self._quit_requested = False
             event.ignore()
             return
 
+        if self._hotkey_filter is not None:
+            self._hotkey_filter.unregister()
+        if self._tray is not None:
+            self._tray.hide()
+
         super().closeEvent(event)
+        QApplication.quit()
+
+    def request_quit(self) -> None:
+        self._quit_requested = True
+        self.close()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -808,3 +904,226 @@ class MainWindow(QMainWindow):
             return False
 
         return True
+
+    # ------------------------------------------------------------------
+    # System tray
+    # ------------------------------------------------------------------
+
+    def _build_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.logger.warning("System tray is unavailable. Close will quit the app.")
+            return
+
+        icon = QIcon(str(self.app_paths.app_icon_file))
+        if icon.isNull():
+            icon = self.windowIcon()
+
+        self._tray = QSystemTrayIcon(icon, self)
+        self._tray.setToolTip("Orbit Panel")
+        self._tray.activated.connect(self._on_tray_activated)
+        self._rebuild_tray_menu()
+        self._tray.show()
+
+    def _rebuild_tray_menu(self) -> None:
+        if self._tray is None:
+            return
+
+        menu = QMenu(self)
+
+        open_action = QAction("Open Orbit Panel", menu)
+        open_action.triggered.connect(self._show_window)
+        menu.addAction(open_action)
+
+        menu.addSeparator()
+
+        if self._scenarios:
+            scenario_menu = menu.addMenu("Run Scenario")
+            for scenario in self._scenarios:
+                scenario_action = QAction(scenario.name, scenario_menu)
+                scenario_action.triggered.connect(
+                    lambda _checked=False, scenario_id=scenario.id: self._run_scenario(scenario_id)
+                )
+                scenario_menu.addAction(scenario_action)
+
+        run_all_action = QAction("Run All Items", menu)
+        run_all_action.triggered.connect(self._run_all_items)
+        menu.addAction(run_all_action)
+
+        menu.addSeparator()
+
+        settings_action = QAction("Settings...", menu)
+        settings_action.triggered.connect(self._open_settings)
+        menu.addAction(settings_action)
+
+        menu.addSeparator()
+
+        quit_action = QAction("Quit Orbit Panel", menu)
+        quit_action.triggered.connect(self.request_quit)
+        menu.addAction(quit_action)
+
+        self._tray.setContextMenu(menu)
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in {QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick}:
+            self.toggle_window_visibility()
+
+    def _show_window(self) -> None:
+        self.show()
+        if self.windowState() & Qt.WindowMinimized:
+            self.setWindowState((self.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive)
+        self.raise_()
+        self.activateWindow()
+
+    def toggle_window_visibility(self) -> None:
+        if self.isHidden() or self.isMinimized() or not self.isActiveWindow():
+            self._show_window()
+        else:
+            self.hide()
+
+    # ------------------------------------------------------------------
+    # Global hotkey
+    # ------------------------------------------------------------------
+
+    def attach_hotkey_filter(self, hotkey_filter: GlobalHotkeyFilter) -> None:
+        self._hotkey_filter = hotkey_filter
+        self._apply_hotkey_state()
+
+    def _apply_hotkey_state(self) -> None:
+        if self._hotkey_filter is None:
+            return
+
+        if self._app_settings.global_hotkey_enabled:
+            self._hotkey_filter.register()
+        else:
+            self._hotkey_filter.unregister()
+
+    # ------------------------------------------------------------------
+    # Scenarios
+    # ------------------------------------------------------------------
+
+    def _refresh_scenarios(self) -> None:
+        self.scenario_strip.set_scenarios(self._scenarios)
+        self._rebuild_tray_menu()
+
+    def _find_scenario(self, scenario_id: str) -> Scenario | None:
+        for scenario in self._scenarios:
+            if scenario.id == scenario_id:
+                return scenario
+        self.logger.warning("Requested scenario was not found: %s", scenario_id)
+        return None
+
+    def _create_scenario(self) -> None:
+        if not self._items:
+            QMessageBox.information(
+                self,
+                "No Items",
+                "Add URL or EXE items first, then compose them into a scenario.",
+            )
+            return
+
+        dialog = ScenarioDialog(items=self._items, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        scenario = dialog.result_scenario()
+        if scenario is None:
+            return
+
+        self._scenarios.append(scenario)
+        self.logger.info("Scenario added: %s", scenario.name)
+        if self._save_items():
+            self._set_status(f"Added scenario '{scenario.name}'.")
+            self._refresh_scenarios()
+
+    def _edit_scenario(self, scenario_id: str) -> None:
+        scenario = self._find_scenario(scenario_id)
+        if scenario is None:
+            return
+
+        dialog = ScenarioDialog(items=self._items, scenario=scenario, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        result_scenario = dialog.result_scenario()
+        if result_scenario is None:
+            return
+
+        for index, existing in enumerate(self._scenarios):
+            if existing.id == scenario_id:
+                self._scenarios[index] = result_scenario
+                break
+
+        self.logger.info("Scenario edited: %s", result_scenario.name)
+        if self._save_items():
+            self._set_status(f"Updated scenario '{result_scenario.name}'.")
+            self._refresh_scenarios()
+
+    def _delete_scenario(self, scenario_id: str) -> None:
+        scenario = self._find_scenario(scenario_id)
+        if scenario is None:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Delete Scenario",
+            f"Delete scenario '{scenario.name}'?\n\nThis change is saved immediately.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self._scenarios = [existing for existing in self._scenarios if existing.id != scenario_id]
+        self.logger.info("Scenario deleted: %s", scenario.name)
+        if self._save_items():
+            self._set_status(f"Deleted scenario '{scenario.name}'.")
+            self._refresh_scenarios()
+
+    def _run_scenario(self, scenario_id: str) -> None:
+        scenario = self._find_scenario(scenario_id)
+        if scenario is None:
+            return
+
+        if self._scenario_runner.is_running:
+            self._set_status("A scenario is already running. Wait for it to finish.")
+            return
+
+        item_lookup = {item.id: item for item in self._items}
+        if not self._scenario_runner.run(scenario, item_lookup):
+            self._set_status(f"Scenario '{scenario.name}' has no runnable steps.")
+
+    def _on_scenario_step_started(self, scenario_name: str, step_number: int, total_steps: int) -> None:
+        self._set_status(f"Scenario '{scenario_name}': step {step_number}/{total_steps}...")
+
+    def _on_scenario_finished(self, scenario_name: str, ok_count: int, total_steps: int) -> None:
+        self._set_status(
+            f"Scenario '{scenario_name}' complete: {ok_count}/{total_steps} step(s) ok."
+        )
+        if self._tray is not None and not self.isVisible():
+            self._tray.showMessage(
+                "Orbit Panel",
+                f"Scenario '{scenario_name}' complete: {ok_count}/{total_steps} step(s) ok.",
+                QSystemTrayIcon.Information,
+                3000,
+            )
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(settings=self._app_settings, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        result_settings = dialog.result_settings()
+        if result_settings is None:
+            return
+
+        self._app_settings = result_settings
+        self.launcher_service.app_settings = result_settings
+        set_autostart_enabled(dialog.autostart_requested(), self.logger)
+        self._apply_hotkey_state()
+
+        if self._save_items():
+            self._set_status("Settings saved.")
