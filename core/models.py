@@ -133,10 +133,109 @@ class UiState:
         }
 
 
+class BrowserChoice(str, Enum):
+    SYSTEM_DEFAULT = "system_default"
+    CHROME = "chrome"
+    EDGE = "edge"
+    CUSTOM = "custom"
+
+
+@dataclass(slots=True)
+class AppSettings:
+    browser: BrowserChoice = BrowserChoice.CHROME
+    custom_browser_path: str = ""
+    minimize_to_tray: bool = True
+    global_hotkey_enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any] | None) -> "AppSettings":
+        if not raw or not isinstance(raw, Mapping):
+            return cls()
+
+        raw_browser = str(raw.get("browser") or BrowserChoice.CHROME.value).strip().lower()
+        browser = _enum_or_none(BrowserChoice, raw_browser) or BrowserChoice.CHROME
+
+        return cls(
+            browser=browser,
+            custom_browser_path=str(raw.get("custom_browser_path") or "").strip(),
+            minimize_to_tray=bool(raw.get("minimize_to_tray", True)),
+            global_hotkey_enabled=bool(raw.get("global_hotkey_enabled", True)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "browser": self.browser.value,
+            "custom_browser_path": self.custom_browser_path,
+            "minimize_to_tray": self.minimize_to_tray,
+            "global_hotkey_enabled": self.global_hotkey_enabled,
+        }
+
+
+@dataclass(slots=True)
+class ScenarioStep:
+    item_id: str
+    delay_seconds: float = 0.0
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "ScenarioStep":
+        item_id = str(raw.get("item_id") or "").strip()
+        if not item_id:
+            raise ValueError("Scenario step is missing an item_id.")
+
+        try:
+            delay_seconds = max(0.0, float(raw.get("delay_seconds", 0.0)))
+        except (TypeError, ValueError):
+            delay_seconds = 0.0
+
+        return cls(item_id=item_id, delay_seconds=delay_seconds)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"item_id": self.item_id, "delay_seconds": self.delay_seconds}
+
+
+@dataclass(slots=True)
+class Scenario:
+    id: str
+    name: str
+    steps: list[ScenarioStep] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, *, name: str, steps: list[ScenarioStep] | None = None) -> "Scenario":
+        return cls(id=str(uuid.uuid4()), name=name.strip(), steps=list(steps or []))
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "Scenario":
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            raise ValueError("Scenario is missing a name.")
+
+        raw_steps = raw.get("steps")
+        steps: list[ScenarioStep] = []
+        if isinstance(raw_steps, list):
+            for raw_step in raw_steps:
+                if isinstance(raw_step, Mapping):
+                    steps.append(ScenarioStep.from_dict(raw_step))
+
+        return cls(
+            id=str(raw.get("id") or uuid.uuid4()),
+            name=name,
+            steps=steps,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "steps": [step.to_dict() for step in self.steps],
+        }
+
+
 @dataclass(slots=True)
 class AppConfig:
     launcher_items: list["LauncherItem"]
     ui_state: UiState = field(default_factory=UiState)
+    scenarios: list[Scenario] = field(default_factory=list)
+    app_settings: AppSettings = field(default_factory=AppSettings)
 
 
 @dataclass(slots=True)

@@ -4,6 +4,10 @@ Windows 전용 생산성 런처. Python + PySide6 데스크톱 앱.
 
 URL과 EXE/LNK 항목을 그룹별로 관리하고, 선택적으로 Python 자동화 스크립트를 실행.
 
+주요 기능: 시나리오(항목 순차 실행 + 스텝별 딜레이), 시스템 트레이 상주(닫기 = 트레이로),
+글로벌 핫키 Ctrl+Alt+O(창 표시/숨김), Windows 시작 시 자동 실행, URL 브라우저 선택
+(기본/Chrome/Edge/커스텀), 내장 액션(대기·클립보드·폴더열기·창포커스).
+
 ## 요구사항
 
 - Windows
@@ -36,9 +40,12 @@ powershell -ExecutionPolicy Bypass -File tools/build_release.ps1
 ```
 core/
 ├── action_dispatcher.py         # 액션 실행 관리
+├── autostart.py                 # HKCU Run 키 자동 시작 등록
 ├── config_loader.py             # JSON 설정 로드/저장
+├── global_hotkey.py             # Ctrl+Alt+O 전역 핫키 (RegisterHotKey)
 ├── logger.py
-├── models.py                    # 데이터 모델 (Item, Group 등)
+├── models.py                    # 데이터 모델 (Item, Scenario, AppSettings 등)
+├── scenario_runner.py           # 시나리오 순차 실행 (QTimer 기반)
 ├── windows_diagnostics.py
 └── windows_shortcuts.py
 
@@ -46,7 +53,12 @@ ui/
 ├── card_widget.py               # 항목 카드 위젯
 ├── group_panel.py               # 그룹 패널
 ├── log_panel.py
+├── scenario_dialog.py           # 시나리오 편집 다이얼로그
+├── scenario_panel.py            # 시나리오 스트립 (메인 화면)
+├── settings_dialog.py           # 설정 다이얼로그
 └── styles.py                    # 다크 테마 스타일
+
+packaging/winget/                # winget 매니페스트 템플릿 (docs/winget-publish.md 참고)
 
 actions/                         # 커스텀 액션 정의
 

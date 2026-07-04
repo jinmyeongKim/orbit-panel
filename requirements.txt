@@ -1,1 +1,6 @@
 PySide6>=6.8
+
+# Optional - only needed for browser automation scripts (scripts/examples/github_login.py):
+# playwright
+# keyring
+# pyotp

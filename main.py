@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 
 from core.action_dispatcher import ActionDispatcher
 from core.config_loader import ConfigLoader
+from core.global_hotkey import GlobalHotkeyFilter
 from core.launcher import LauncherService
 from core.logger import LogStore, configure_logging
 from core.paths import AppPaths
@@ -46,6 +47,8 @@ def main() -> int:
     app.setOrganizationName("Orbit Panel")
     app.setStyle("Fusion")
     app.setFont(_build_app_font())
+    # The window hides to the tray on close; quitting is explicit via the tray menu.
+    app.setQuitOnLastWindowClosed(False)
 
     app_icon = QIcon(str(app_paths.app_icon_file))
     logger.info("App icon path: %s", app_paths.app_icon_file)
@@ -74,11 +77,17 @@ def main() -> int:
     )
     if not app_icon.isNull():
         window.setWindowIcon(app_icon)
+
+    hotkey_filter = GlobalHotkeyFilter(window.toggle_window_visibility, logger)
+    app.installNativeEventFilter(hotkey_filter)
+    window.attach_hotkey_filter(hotkey_filter)
+
     window.show()
     if not app_icon.isNull() and window.windowHandle() is not None:
         window.windowHandle().setIcon(app_icon)
 
     exit_code = app.exec()
+    hotkey_filter.unregister()
     logger.info("Application shutting down")
     return exit_code
 

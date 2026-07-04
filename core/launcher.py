@@ -12,7 +12,7 @@ from typing import Sequence
 import webbrowser
 
 from core.action_dispatcher import ActionDispatcher
-from core.models import LauncherItem, LauncherType, RunMode, ScriptType
+from core.models import AppSettings, BrowserChoice, LauncherItem, LauncherType, RunMode, ScriptType
 from core.paths import AppPaths
 from core.windows_shortcuts import SUPPORTED_EXECUTABLE_DROP_SUFFIXES, supported_target_summary
 
@@ -46,12 +46,16 @@ class LauncherService:
         self.logger = logger
         self.dispatcher = dispatcher
         self.app_paths = app_paths
+        self.app_settings = AppSettings()
         self._chrome_path = self._find_chrome()
+        self._edge_path = self._find_edge()
 
         if self._chrome_path:
             self.logger.info("Detected Chrome at %s", self._chrome_path)
         else:
             self.logger.info("Chrome not found. URL items will open in the default browser.")
+        if self._edge_path:
+            self.logger.info("Detected Edge at %s", self._edge_path)
 
     def launch_target(self, item: LauncherItem) -> ExecutionResult:
         if item.type is LauncherType.URL:
@@ -110,19 +114,20 @@ class LauncherService:
 
         self.logger.info("Launching URL target for '%s': %s", item.title, target)
 
-        chrome_path = self._chrome_path or self._find_chrome()
-        if chrome_path:
-            self._chrome_path = chrome_path
+        browser_command = self._resolve_browser_command()
+        if browser_command:
+            browser_path = Path(browser_command[0])
+            browser_name = browser_path.stem
             try:
-                subprocess.Popen([str(chrome_path), "--new-tab", target], cwd=str(chrome_path.parent))
+                subprocess.Popen([*browser_command, target], cwd=str(browser_path.parent))
             except OSError:
-                self.logger.exception("Chrome launch failed for '%s'", item.title)
-                return ExecutionResult(False, f"Failed to open URL in Chrome: {target}")
+                self.logger.exception("Browser launch failed for '%s'", item.title)
+                return ExecutionResult(False, f"Failed to open URL in {browser_name}: {target}")
 
-            self.logger.info("URL launch succeeded for '%s' via Chrome", item.title)
-            return ExecutionResult(True, f"Opened URL in Chrome: {target}")
+            self.logger.info("URL launch succeeded for '%s' via %s", item.title, browser_name)
+            return ExecutionResult(True, f"Opened URL in {browser_name}: {target}")
 
-        self.logger.info("Chrome not found. Opening '%s' in the default browser.", item.title)
+        self.logger.info("Opening '%s' in the default browser.", item.title)
         try:
             opened = webbrowser.open(target)
         except Exception:
@@ -204,6 +209,60 @@ class LauncherService:
 
         self.logger.info("Shell-handled target launch succeeded for '%s'", item.title)
         return ExecutionResult(True, f"Opened target: {target_path}")
+
+    def _resolve_browser_command(self) -> list[str] | None:
+        """Return the browser launch command per settings, or None for the system default."""
+        choice = self.app_settings.browser
+
+        if choice is BrowserChoice.SYSTEM_DEFAULT:
+            return None
+
+        if choice is BrowserChoice.CUSTOM:
+            custom_raw = self.app_settings.custom_browser_path.strip()
+            if custom_raw:
+                custom_path = Path(os.path.expandvars(custom_raw)).expanduser()
+                if custom_path.exists():
+                    return [str(custom_path)]
+                self.logger.warning("Custom browser not found: %s. Falling back to default.", custom_path)
+            return None
+
+        if choice is BrowserChoice.EDGE:
+            edge_path = self._edge_path or self._find_edge()
+            if edge_path:
+                self._edge_path = edge_path
+                return [str(edge_path), "--new-tab"]
+            self.logger.warning("Edge not found. Falling back to the default browser.")
+            return None
+
+        chrome_path = self._chrome_path or self._find_chrome()
+        if chrome_path:
+            self._chrome_path = chrome_path
+            return [str(chrome_path), "--new-tab"]
+        return None
+
+    def _find_edge(self) -> Path | None:
+        candidates: list[Path] = []
+
+        path_hit = shutil.which("msedge") or shutil.which("msedge.exe")
+        if path_hit:
+            candidates.append(Path(path_hit))
+
+        for env_name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            root = os.environ.get(env_name)
+            if not root:
+                continue
+            candidates.append(Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe")
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = str(candidate).lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            if candidate.exists():
+                return candidate
+
+        return None
 
     def _find_chrome(self) -> Path | None:
         candidates: list[Path] = []
